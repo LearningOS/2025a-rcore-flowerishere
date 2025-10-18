@@ -14,7 +14,7 @@ mod switch;
 #[allow(clippy::module_inception)]
 mod task;
 
-use crate::config::MAX_APP_NUM;
+use crate::config::{MAX_APP_NUM, MAX_SYSCALL_NUM};
 use crate::loader::{get_num_app, init_app_cx};
 use crate::sync::UPSafeCell;
 use lazy_static::*;
@@ -23,6 +23,12 @@ pub use task::{TaskControlBlock, TaskStatus};
 
 pub use context::TaskContext;
 
+/// Task information structure for system call 
+#[derive(Clone, Copy)]
+pub struct TaskInfo {
+    /// Array storing the count of each system call made by the task
+    pub syscall_count: [usize; MAX_SYSCALL_NUM],
+}
 /// The task manager, where all the tasks are managed.
 ///
 /// Functions implemented on `TaskManager` deals with all task state transitions
@@ -45,6 +51,8 @@ pub struct TaskManagerInner {
     tasks: [TaskControlBlock; MAX_APP_NUM],
     /// id of current `Running` task
     current_task: usize,
+    /// syscall count of task
+    task_info_map: [TaskInfo; MAX_SYSCALL_NUM],
 }
 
 lazy_static! {
@@ -54,7 +62,13 @@ lazy_static! {
         let mut tasks = [TaskControlBlock {
             task_cx: TaskContext::zero_init(),
             task_status: TaskStatus::UnInit,
+            syscall_count: [0; MAX_SYSCALL_NUM],
         }; MAX_APP_NUM];
+    // initial task_info_map
+        let task_info_map = [TaskInfo {
+            syscall_count: [0; MAX_SYSCALL_NUM],
+        };MAX_SYSCALL_NUM];
+
         for (i, task) in tasks.iter_mut().enumerate() {
             task.task_cx = TaskContext::goto_restore(init_app_cx(i));
             task.task_status = TaskStatus::Ready;
@@ -65,6 +79,7 @@ lazy_static! {
                 UPSafeCell::new(TaskManagerInner {
                     tasks,
                     current_task: 0,
+                    task_info_map,
                 })
             },
         }
@@ -133,6 +148,26 @@ impl TaskManager {
             // go back to user mode
         } else {
             panic!("All applications completed!");
+        }
+    }
+    
+    ///include syscall count
+    pub fn inc_current_syscall_count(&self, syscall_id: usize) {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        if syscall_id < MAX_SYSCALL_NUM {
+            inner.task_info_map[current].syscall_count[syscall_id] += 1;
+        }
+    }
+
+    ///ret syscall count
+    pub fn get_current_syscall_count(&self, syscall_id:usize) -> usize {
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        if syscall_id < MAX_SYSCALL_NUM {
+            inner.task_info_map[current].syscall_count[syscall_id]
+        } else {
+            0
         }
     }
 }
