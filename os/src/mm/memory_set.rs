@@ -51,6 +51,10 @@ impl MemorySet {
     pub fn token(&self) -> usize {
         self.page_table.token()
     }
+    ///unmap page
+    pub fn unmap(&mut self, vpn:VirtPageNum) {
+        self.page_table.unmap(vpn);
+    }
     /// Assume that no conflicts.
     pub fn insert_framed_area(
         &mut self,

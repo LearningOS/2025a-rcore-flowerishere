@@ -1,6 +1,6 @@
 //! Implementation of [`PageTableEntry`] and [`PageTable`].
 
-use super::{frame_alloc, FrameTracker, PhysPageNum, StepByOne, VirtAddr, VirtPageNum};
+use super::{frame_alloc, FrameTracker, PhysAddr, PhysPageNum, StepByOne, VirtAddr, VirtPageNum};
 use alloc::vec;
 use alloc::vec::Vec;
 use bitflags::*;
@@ -178,4 +178,72 @@ pub fn translated_byte_buffer(token: usize, ptr: *const u8, len: usize) -> Vec<&
         start = end_va.into();
     }
     v
+}
+
+/// Translate a pointer to a mutable reference in user space through page table
+pub fn translated_refmut<T>(token: usize, ptr: *mut T) -> &'static mut T {
+    let page_table = PageTable::from_token(token);
+    let va = VirtAddr::from(ptr as usize);
+    let pa: PhysAddr = page_table.translate(va.floor()).unwrap().ppn().into();
+    let offset = va.page_offset();
+    let pa_ptr = (pa.0 + offset) as *mut T;
+    unsafe { &mut *pa_ptr }
+}
+
+/// Read one byte from user space through page table
+///
+/// # Arguments
+/// * `token` - The page table token (satp register value)
+/// * `ptr` - Pointer to the byte in user space
+///
+/// # Returns
+/// * `Some(u8)` - The byte read if successful
+/// * `None` - If the address is invalid or not readable
+pub fn read_one_bytes(token: usize, ptr: *const u8) -> Option<u8> {
+    if ptr as usize >= (1 << 39) {
+        return None;
+    }
+    let page_table = PageTable::from_token(token);
+    let va = VirtAddr::from(ptr as usize);
+    if let Some(pte) = page_table.translate(va.floor()) {
+        if !pte.readable() {
+            return None;
+        }
+        let pa: PhysAddr = pte.ppn().into();
+        let offset = va.page_offset();
+        let byte_ref: &u8 = unsafe { (pa.0 as *const u8).add(offset).as_ref().unwrap() };
+        Some(*byte_ref)
+    } else {
+        None
+    }
+}
+
+/// Write one byte to user space through page table
+///
+/// # Arguments
+/// * `token` - The page table token (satp register value)
+/// * `ptr` - Pointer to the byte in user space
+/// * `data` - The byte to write
+///
+/// # Returns
+/// * `true` - If the write was successful
+/// * `false` - If the address is invalid or not writable
+pub fn write_one_bytes(token: usize, ptr: *mut u8, data: u8) -> bool {
+    if ptr as usize >= (1 << 39) {
+        return false;
+    }
+    let page_table = PageTable::from_token(token);
+    let va = VirtAddr::from(ptr as usize);
+    if let Some(pte) = page_table.translate(va.floor()) {
+        if !pte.writable() {
+            return false;
+        }
+        let pa: PhysAddr = pte.ppn().into();
+        let offset = va.page_offset();
+        let byte_ref: &mut u8 = unsafe { (pa.0 as *mut u8).add(offset).as_mut().unwrap() };
+        *byte_ref = data;
+        true
+    } else {
+        false
+    }
 }
